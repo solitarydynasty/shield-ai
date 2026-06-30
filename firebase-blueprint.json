@@ -1,0 +1,105 @@
+{
+  "entities": {
+    "Task": {
+      "title": "Task",
+      "description": "A high-stakes mission deadline analyzed by ShieldAI.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the task" },
+        "title": { "type": "string", "description": "Title of the task" },
+        "deadline": { "type": "string", "description": "Target deadline ISO timestamp" },
+        "context": { "type": "string", "description": "User notes or strategic context" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "riskLevel": { "type": "string", "enum": ["Low", "Medium", "High", "Critical"] },
+        "riskFactor": { "type": "integer", "description": "Failure percentage from 0 to 100" },
+        "assessment": { "type": "string", "description": "AI analysis of potential failure risk" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "deadline", "priority", "riskLevel", "riskFactor", "completed", "createdAt"]
+    },
+    "CalendarEvent": {
+      "title": "CalendarEvent",
+      "description": "An automated defensive event block injected into the user's workflow.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "start": { "type": "string" },
+        "end": { "type": "string" },
+        "type": { "type": "string", "enum": ["deadline", "milestone", "focus-block"] },
+        "taskId": { "type": "string" },
+        "subtaskId": { "type": "string" }
+      },
+      "required": ["id", "title", "start", "end", "type"]
+    },
+    "FocusSession": {
+      "title": "FocusSession",
+      "description": "A deep focus block completed by the user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "taskId": { "type": "string" },
+        "subtaskId": { "type": "string" },
+        "durationMinutes": { "type": "integer" },
+        "completedAt": { "type": "string" },
+        "moodBefore": { "type": "string" },
+        "moodAfter": { "type": "string" }
+      },
+      "required": ["id", "durationMinutes", "completedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "The user's productivity records, streaks, and milestone achievements.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "streak": { "type": "integer" },
+        "lastActiveDate": { "type": "string" },
+        "focusMinutesTotal": { "type": "integer" },
+        "unlockedInsights": {
+          "type": "array"
+        },
+        "unlockedMilestones": {
+          "type": "array"
+        }
+      },
+      "required": ["userId", "streak", "lastActiveDate", "focusMinutesTotal", "unlockedInsights", "unlockedMilestones"]
+    },
+    "LearningProfile": {
+      "title": "LearningProfile",
+      "description": "The dynamic user work habit speed multipliers by category.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "categories": {
+          "type": "object",
+          "description": "Stats mapping categories to estimations and actual completion records"
+        }
+      },
+      "required": ["userId", "categories"]
+    }
+  },
+  "firestore": {
+    "tasks": {
+      "schema": { "$ref": "Task" },
+      "description": "Collection of tasks being tracked."
+    },
+    "calendar_events": {
+      "schema": { "$ref": "CalendarEvent" },
+      "description": "Blocks in the visual workspace calendar."
+    },
+    "focus_sessions": {
+      "schema": { "$ref": "FocusSession" },
+      "description": "Individual focused sessions tracked on subtasks."
+    },
+    "user_profiles": {
+      "schema": { "$ref": "UserProfile" },
+      "description": "Gamification, streaks, and achievements profile."
+    },
+    "learning_profiles": {
+      "schema": { "$ref": "LearningProfile" },
+      "description": "Adaptive time prediction profiles for task category velocities."
+    }
+  }
+}

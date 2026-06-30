@@ -1,0 +1,6 @@
+{
+  "name": "ShieldAI",
+  "description": "Proactive AI-powered productivity companion that actively decomposes tasks, calculates deadline failure probability, and schedules emergency workspace rescue blocks to ensure you never miss high-stakes launches.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
