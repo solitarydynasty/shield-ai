@@ -1060,6 +1060,412 @@ function getMockDecomposition(title: string, deadline: string, energyLevel?: str
   };
 }
 
+// 4a. AI Academic OS: Goal-Based Tasks decomposition
+app.post("/api/ai/create-goal", rateLimitMiddleware, validateAndSanitize, async (req, res) => {
+  const startTime = Date.now();
+  try {
+    const { title, deadline } = req.body;
+    if (!title || !deadline) {
+      return res.status(400).json({ error: "Missing title or deadline for the goal" });
+    }
+
+    const cacheKey = getCacheKey("/api/ai/create-goal", req.body);
+    const cached = aiResponseCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      diagnostics.cacheHits++;
+      return res.json(cached.response);
+    }
+
+    const prompt = `You are a world-class academic mentor and executive assistant. Translate the high-level goal: "${title}" into a structured sequence of milestone tasks leading up to the target date/deadline of "${deadline}".
+    Output a compact, strict JSON response with:
+    {
+      "assessment": "A professional mentor's 1-2 sentence encouraging strategic assessment of this goal and its difficulty",
+      "suggestedSubtasks": [
+        {
+          "title": "Descriptive name of the study/action unit, e.g. DBMS Unit 1: Relational Algebra",
+          "context": "Notes on what specifically to do/study",
+          "priority": "low"|"medium"|"high"|"critical",
+          "difficulty": "easy"|"medium"|"hard",
+          "durationMinutes": 120,
+          "suggestedTimeOffsetDays": 1,
+          "category": "Coding"|"Design"|"Research"|"Documentation"|"Testing"|"Deployment"|"Planning"|"Other"
+        }
+      ]
+    }
+    JSON format strictly.`;
+
+    let resultJSON: any;
+    if (!process.env.GEMINI_API_KEY) {
+      // Mock fallback
+      resultJSON = {
+        assessment: `Sovereign plan prepared for "${title}". We have broken this major objective down into structured milestones aligned with the target date.`,
+        suggestedSubtasks: [
+          {
+            title: `Analyze Foundations of ${title}`,
+            context: `Focus on primary components, definitions, and establishing the core workspace.`,
+            priority: "high",
+            difficulty: "medium",
+            durationMinutes: 90,
+            suggestedTimeOffsetDays: 1,
+            category: "Planning"
+          },
+          {
+            title: `Practical Application & Deep-Dive for ${title}`,
+            context: `Tackle complex practice problems, implement code fragments, or design system schemas.`,
+            priority: "critical",
+            difficulty: "hard",
+            durationMinutes: 180,
+            suggestedTimeOffsetDays: 3,
+            category: "Coding"
+          },
+          {
+            title: `Advanced Concepts & Refinements for ${title}`,
+            context: `Solve previous exam papers, complete key templates, and review weak edge cases.`,
+            priority: "high",
+            difficulty: "hard",
+            durationMinutes: 120,
+            suggestedTimeOffsetDays: 5,
+            category: "Research"
+          },
+          {
+            title: `Mock Testing & Fast Revision Sprints`,
+            context: `Complete timed practice blocks under test conditions to consolidate knowledge.`,
+            priority: "medium",
+            difficulty: "easy",
+            durationMinutes: 60,
+            suggestedTimeOffsetDays: 7,
+            category: "Testing"
+          }
+        ]
+      };
+    } else {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      const text = response.text;
+      if (!text) throw new Error("Null response from Gemini core");
+      resultJSON = JSON.parse(text);
+      updateCostEstimates(prompt.length, text.length);
+    }
+
+    aiResponseCache.set(cacheKey, { response: resultJSON, timestamp: Date.now() });
+    res.json(resultJSON);
+  } catch (error: any) {
+    console.error("Error creating goal subtasks:", error);
+    res.status(500).json({ error: error.message || "Failed to create goal subtasks" });
+  }
+});
+
+// 4b. AI Academic OS: Syllabus & Notes Document Analyzer
+app.post("/api/ai/analyze-syllabus", rateLimitMiddleware, validateAndSanitize, async (req, res) => {
+  const startTime = Date.now();
+  try {
+    const { rawText } = req.body;
+    if (!rawText || rawText.trim().length === 0) {
+      return res.status(400).json({ error: "Missing rawText or document content for syllabus analysis" });
+    }
+
+    const cacheKey = getCacheKey("/api/ai/analyze-syllabus", req.body);
+    const cached = aiResponseCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      diagnostics.cacheHits++;
+      return res.json(cached.response);
+    }
+
+    const prompt = `You are an elite academic tutor. Analyze the following uploaded syllabus text, lecture notes, or document details:
+    "${rawText}"
+    Extract the structured units, topics, and study requirements.
+    Output a compact, strict JSON response with:
+    {
+      "subjectName": "Detected subject name or appropriate title, e.g. Database Management Systems",
+      "units": [
+        {
+          "number": 1,
+          "title": "Unit title",
+          "topics": [
+            {
+              "name": "Topic name",
+              "difficulty": "easy"|"medium"|"hard",
+              "estimatedHours": 3,
+              "dependencies": ["prior topics or None"],
+              "importantConcepts": ["key terms or formula"]
+            }
+          ]
+        }
+      ],
+      "difficulty": "easy"|"medium"|"hard",
+      "estimatedStudyHours": 18,
+      "revisionRequirements": "1-2 sentences summarizing revision/practice recommendation",
+      "suggestedOrder": ["The chronological suggested order of unit study names"]
+    }
+    JSON format strictly.`;
+
+    let resultJSON: any;
+    if (!process.env.GEMINI_API_KEY) {
+      // Mock fallback
+      resultJSON = {
+        subjectName: "Optimized Study Program",
+        units: [
+          {
+            number: 1,
+            title: "Core Core Architecture & Theory",
+            topics: [
+              { name: "Introductory Concepts", difficulty: "easy", estimatedHours: 2, dependencies: [], importantConcepts: ["Vocabulary", "Hierarchy"] },
+              { name: "Structural Frameworks & Relationships", difficulty: "medium", estimatedHours: 3, dependencies: ["Introductory Concepts"], importantConcepts: ["Data Modeler", "Integrity Constraints"] }
+            ]
+          },
+          {
+            number: 2,
+            title: "Advanced Practical Operations",
+            topics: [
+              { name: "Functional Execution Block", difficulty: "hard", estimatedHours: 4, dependencies: ["Structural Frameworks & Relationships"], importantConcepts: ["Indexing", "Query Execution Plan"] },
+              { name: "Edge Case Management & Failures", difficulty: "medium", estimatedHours: 3, dependencies: ["Functional Execution Block"], importantConcepts: ["State Restoration", "Transaction Limits"] }
+            ]
+          }
+        ],
+        difficulty: "hard",
+        estimatedStudyHours: 12,
+        revisionRequirements: "Focus heavily on the functional execution blocks and transaction boundaries. Write mock queries under timed constraints.",
+        suggestedOrder: ["Unit 1: Core Core Architecture & Theory", "Unit 2: Advanced Practical Operations"]
+      };
+    } else {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      const text = response.text;
+      if (!text) throw new Error("Null response from Gemini core");
+      resultJSON = JSON.parse(text);
+      updateCostEstimates(prompt.length, text.length);
+    }
+
+    aiResponseCache.set(cacheKey, { response: resultJSON, timestamp: Date.now() });
+    res.json(resultJSON);
+  } catch (error: any) {
+    console.error("Error analyzing syllabus:", error);
+    res.status(500).json({ error: error.message || "Failed to analyze syllabus text" });
+  }
+});
+
+// 4c. AI Academic OS: Multi-Subject Study Planner
+app.post("/api/ai/multi-subject-plan", rateLimitMiddleware, validateAndSanitize, async (req, res) => {
+  const startTime = Date.now();
+  try {
+    const { subjects, preparations } = req.body;
+    if (!subjects || !Array.isArray(subjects)) {
+      return res.status(400).json({ error: "Subjects array is required for multi-subject planning" });
+    }
+
+    const cacheKey = getCacheKey("/api/ai/multi-subject-plan", req.body);
+    const cached = aiResponseCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      diagnostics.cacheHits++;
+      return res.json(cached.response);
+    }
+
+    const prompt = `You are a world-class academic program manager. Create an optimized, integrated, multi-subject study strategy.
+    Subjects/Deadlines: ${JSON.stringify(subjects)}.
+    Current preparations/notes: ${JSON.stringify(preparations || {})}.
+    Output a compact, strict JSON response with:
+    {
+      "weakestSubject": "Which subject/goal has the highest risk or lowest current preparation and needs extra hours",
+      "earliestExam": "The name of the subject with the earliest deadline",
+      "overlapInsights": "1-2 sentences on which topics overlap or can be learned faster together",
+      "optimizedOrder": ["Chronological recommended order of subject study blocks"],
+      "studyPlan": [
+        {
+          "subject": "Subject Name",
+          "topic": "Topic to study",
+          "durationMinutes": 90,
+          "orderIndex": 1,
+          "coachingTip": "Specific advice for learning this topic"
+        }
+      ],
+      "explanation": "A detailed breakdown of why this multi-subject plan is structured this way"
+    }
+    JSON format strictly.`;
+
+    let resultJSON: any;
+    if (!process.env.GEMINI_API_KEY) {
+      // Mock fallback
+      resultJSON = {
+        weakestSubject: subjects[0]?.name || "Primary Subject Exam",
+        earliestExam: subjects[0]?.name || "Primary Subject Exam",
+        overlapInsights: "Theoretical architectures have a 30% structural overlap with practical implementation. Learning structural rules early will accelerate implementation tasks.",
+        optimizedOrder: subjects.map(s => s.name),
+        studyPlan: subjects.map((sub: any, idx: number) => ({
+          subject: sub.name,
+          topic: "Core Concept Boot Camp & Active Recall",
+          durationMinutes: 90,
+          orderIndex: idx + 1,
+          coachingTip: `Dedicate the first 30 minutes to sketching the primary unit dependencies from memory, then write out practice questions.`
+        })),
+        explanation: "This plan prioritizes subjects chronologically while allocating a 1.5x study coefficient to identified high-complexity subjects."
+      };
+    } else {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      const text = response.text;
+      if (!text) throw new Error("Null response from Gemini core");
+      resultJSON = JSON.parse(text);
+      updateCostEstimates(prompt.length, text.length);
+    }
+
+    aiResponseCache.set(cacheKey, { response: resultJSON, timestamp: Date.now() });
+    res.json(resultJSON);
+  } catch (error: any) {
+    console.error("Error creating multi-subject plan:", error);
+    res.status(500).json({ error: error.message || "Failed to create multi-subject study plan" });
+  }
+});
+
+// 4d. AI Academic OS: Multi-Task Scheduler & Optimizer with Explanations
+app.post("/api/ai/optimize-schedule", rateLimitMiddleware, validateAndSanitize, async (req, res) => {
+  const startTime = Date.now();
+  try {
+    const { tasks, calendarEvents, energyLevel, onboarding, replanningContext } = req.body;
+
+    const cacheKey = getCacheKey("/api/ai/optimize-schedule", req.body);
+    const cached = aiResponseCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      diagnostics.cacheHits++;
+      return res.json(cached.response);
+    }
+
+    const workingHoursStart = onboarding?.workingHoursStart || "09:00";
+    const workingHoursEnd = onboarding?.workingHoursEnd || "18:00";
+    const sleepBedtime = onboarding?.sleepBedtime || "23:00";
+    const sleepWakeTime = onboarding?.sleepWakeTime || "07:00";
+
+    const prompt = `You are a top-tier cognitive productivity engine.
+    Analyze the following dataset to build ONE optimized, integrated daily schedule of study sessions and tasks for today:
+    - Tasks / Goals: ${JSON.stringify(tasks || [])}
+    - Calendar events: ${JSON.stringify(calendarEvents || [])}
+    - User Energy level: "${energyLevel || "medium"}"
+    - Working hours: ${workingHoursStart} to ${workingHoursEnd}
+    - Sleep schedule: Bedtime ${sleepBedtime}, Wake ${sleepWakeTime}
+    - Previous schedule items missed or finished early? ${JSON.stringify(replanningContext || {})}
+    
+    Output a compact, strict JSON response with:
+    {
+      "recommendedNextAction": {
+        "title": "Name of best next task or study block",
+        "reason": "Why this specific task was selected over others now",
+        "impact": "What completing this will unlock or mitigate",
+        "confidenceScore": 95,
+        "postponedAlternativeReason": "Why other tasks were postponed to later blocks"
+      },
+      "todaySessions": [
+        {
+          "timeLabel": "09:00 - 10:30",
+          "title": "Study Block: Topic name",
+          "type": "study"|"revision"|"practice"|"mock-test"|"break"|"calendar-event",
+          "durationMinutes": 90,
+          "difficulty": "easy"|"medium"|"hard",
+          "completed": false
+        }
+      ],
+      "burnoutRisk": 35,
+      "remainingWorkloadHours": 4.5,
+      "riskAlerts": ["Compressed deadline detected for Task X", "Energy depletion alert: scheduling 15m mindfulness block"],
+      "replanningExplanation": "Explanation of changes made in the schedule due to recent modifications"
+    }
+    JSON format strictly.`;
+
+    let resultJSON: any;
+    if (!process.env.GEMINI_API_KEY) {
+      // Mock fallback
+      const hasHighRisk = tasks && tasks.some((t: any) => t.priority === "critical" || t.riskFactor > 60);
+      resultJSON = {
+        recommendedNextAction: {
+          title: tasks && tasks.length > 0 ? tasks[0].title : "Foundational Concept Review",
+          reason: hasHighRisk ? "Highest urgency multiplier detected. Postponing lower priority administrative tasks to shield active attention." : "Optimal focus energy match. Aligning task complexity with your reported mental freshness.",
+          impact: "This handles the heaviest cognitive burden early, preventing late-day decision fatigue.",
+          confidenceScore: 94,
+          postponedAlternativeReason: "Postponing secondary milestones to protect your core active deadline."
+        },
+        todaySessions: [
+          {
+            timeLabel: "09:00 - 10:30",
+            title: tasks && tasks.length > 0 ? `Deep Session: ${tasks[0].title}` : "Deep Concept Study Sprint",
+            type: "study",
+            durationMinutes: 90,
+            difficulty: "hard",
+            completed: false
+          },
+          {
+            timeLabel: "10:30 - 10:45",
+            title: "Sovereign Pacing: Box Breathing & Hydration",
+            type: "break",
+            durationMinutes: 15,
+            difficulty: "easy",
+            completed: false
+          },
+          {
+            timeLabel: "10:45 - 12:15",
+            title: tasks && tasks.length > 1 ? `Implementation: ${tasks[1].title}` : "Practical Active Recall Drill",
+            type: "practice",
+            durationMinutes: 90,
+            difficulty: "medium",
+            completed: false
+          },
+          {
+            timeLabel: "12:15 - 13:00",
+            title: "Mid-day Recharge Break",
+            type: "break",
+            durationMinutes: 45,
+            difficulty: "easy",
+            completed: false
+          },
+          {
+            timeLabel: "14:00 - 15:30",
+            title: "Revision & Mock Practice Session",
+            type: "revision",
+            durationMinutes: 90,
+            difficulty: "medium",
+            completed: false
+          }
+        ],
+        burnoutRisk: energyLevel === "low" ? 75 : energyLevel === "medium" ? 45 : 20,
+        remainingWorkloadHours: 4.5,
+        riskAlerts: [
+          hasHighRisk ? "Compressed deadline risk alert: core milestone due shortly." : "No critical risk alerts. Maintain pacing.",
+          energyLevel === "low" ? "High Cognitive Depletion: Forced pacing blocks injected." : "Optimal pacing shielding active."
+        ],
+        replanningExplanation: replanningContext?.changed 
+          ? `Schedules regenerated automatically due to task modification: ${replanningContext.reason}. Readjusted session weights.`
+          : "Daily program structured and optimized according to active deadlines and priority indices."
+      };
+    } else {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      const text = response.text;
+      if (!text) throw new Error("Null response from Gemini core");
+      resultJSON = JSON.parse(text);
+      updateCostEstimates(prompt.length, text.length);
+    }
+
+    aiResponseCache.set(cacheKey, { response: resultJSON, timestamp: Date.now() });
+    res.json(resultJSON);
+  } catch (error: any) {
+    console.error("Error optimizing schedule:", error);
+    res.status(500).json({ error: error.message || "Failed to generate optimized schedule" });
+  }
+});
+
 // ==========================================
 // 7. Start the Server & Setup Vite Middleware
 // ==========================================

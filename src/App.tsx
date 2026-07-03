@@ -21,6 +21,7 @@ import IntegrationsHub from "./components/IntegrationsHub";
 import ActiveAICopilot from "./components/ActiveAICopilot";
 import AuthAndOnboarding from "./components/AuthAndOnboarding";
 import AIAdvisor from "./components/AIAdvisor";
+import CommandCenter from "./components/CommandCenter";
 import { getDemoPersonaData } from "./lib/demoPersonas";
 
 const defaultUserProfile: UserProfile = {
@@ -59,7 +60,7 @@ export default function App() {
   const [learningProfile, setLearningProfile] = useState<LearningProfile>(defaultLearningProfile);
   
   // Navigation & Modals
-  const [activeTab, setActiveTab] = useState<"dashboard" | "integrations" | "advisor" | "guide">("dashboard");
+  const [activeTab, setActiveTab] = useState<"command_center" | "dashboard" | "integrations" | "advisor" | "guide">("command_center");
   const [cognitiveEnergyLevel, setCognitiveEnergyLevel] = useState<"low" | "medium" | "high">("medium");
   const [focusSubtask, setFocusSubtask] = useState<Subtask | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -1060,7 +1061,18 @@ export default function App() {
         ) : (
           <div className="space-y-6">
             {/* Primary Navigation Tabs */}
-            <div className="flex border-b border-[#333] gap-1 select-none">
+            <div className="flex border-b border-[#333] gap-1 select-none overflow-x-auto whitespace-nowrap">
+              <button
+                onClick={() => setActiveTab("command_center")}
+                className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 flex items-center gap-2 ${
+                  activeTab === "command_center"
+                    ? "border-[#FF5C00] text-[#FF5C00] bg-[#FF5C00]/5 italic"
+                    : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <LayoutDashboard className="h-4 w-4 text-[#FF5C00]" />
+                Command Center
+              </button>
               <button
                 onClick={() => setActiveTab("dashboard")}
                 className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 flex items-center gap-2 ${
@@ -1069,7 +1081,7 @@ export default function App() {
                     : "border-transparent text-slate-400 hover:text-slate-200"
                 }`}
               >
-                <LayoutDashboard className="h-4 w-4" />
+                <Bot className="h-4 w-4" />
                 Mission Terminal
               </button>
               <button
@@ -1108,6 +1120,22 @@ export default function App() {
             </div>
 
             {/* Tab Views */}
+            {activeTab === "command_center" && (
+              <CommandCenter
+                tasks={tasks}
+                events={events}
+                energyLevel={cognitiveEnergyLevel}
+                onSetEnergyLevel={setCognitiveEnergyLevel}
+                userProfile={userProfile}
+                onboarding={userProfile.onboarding}
+                onEnterFocus={handleEnterFocus}
+                onSaveTasks={saveTasks}
+                onSaveEvents={saveEvents}
+                setAiState={setAiState}
+                setAiMessage={setAiMessage}
+              />
+            )}
+
             {activeTab === "dashboard" && (
               <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
                 <div className="xl:col-span-3">
