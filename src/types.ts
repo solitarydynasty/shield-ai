@@ -39,6 +39,9 @@ export interface Task {
   proactiveInterventions?: ProactiveIntervention[];
   createdAt: string;
   completed: boolean;
+  energyLevel?: "low" | "medium" | "high";
+  burnoutRisk?: number; // 0 - 100%
+  pacingSafetyRecommendation?: string;
 }
 
 export interface FocusSession {
@@ -83,6 +86,21 @@ export interface ProactiveIntervention {
   actionLabel: string;
 }
 
+export interface UserOnboardingData {
+  fullName: string;
+  occupation: string;
+  workingHoursStart: string;
+  workingHoursEnd: string;
+  focusWindow: "morning" | "afternoon" | "evening" | "night";
+  sleepBedtime: string;
+  sleepWakeTime: string;
+  timezone: string;
+  goals: string[];
+  notificationsEnabled: boolean;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+}
+
 export interface UserProfile {
   userId: string;
   streak: number;
@@ -90,6 +108,8 @@ export interface UserProfile {
   focusMinutesTotal: number;
   unlockedInsights: { id: string; title: string; hack: string }[];
   unlockedMilestones: number[];
+  onboardingComplete?: boolean;
+  onboarding?: UserOnboardingData;
 }
 
 export interface CategoryStat {

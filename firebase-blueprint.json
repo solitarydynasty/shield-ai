@@ -14,7 +14,13 @@
         "riskFactor": { "type": "integer", "description": "Failure percentage from 0 to 100" },
         "assessment": { "type": "string", "description": "AI analysis of potential failure risk" },
         "completed": { "type": "boolean" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "energyLevel": { "type": "string" },
+        "burnoutRisk": { "type": "integer" },
+        "pacingSafetyRecommendation": { "type": "string" },
+        "subtasks": { "type": "array" },
+        "urgencyCurve": { "type": "array" },
+        "rescueTriggers": { "type": "array" }
       },
       "required": ["id", "title", "deadline", "priority", "riskLevel", "riskFactor", "completed", "createdAt"]
     },
@@ -57,12 +63,10 @@
         "streak": { "type": "integer" },
         "lastActiveDate": { "type": "string" },
         "focusMinutesTotal": { "type": "integer" },
-        "unlockedInsights": {
-          "type": "array"
-        },
-        "unlockedMilestones": {
-          "type": "array"
-        }
+        "unlockedInsights": { "type": "array" },
+        "unlockedMilestones": { "type": "array" },
+        "onboardingComplete": { "type": "boolean" },
+        "onboarding": { "type": "object" }
       },
       "required": ["userId", "streak", "lastActiveDate", "focusMinutesTotal", "unlockedInsights", "unlockedMilestones"]
     },
@@ -72,34 +76,149 @@
       "type": "object",
       "properties": {
         "userId": { "type": "string" },
-        "categories": {
-          "type": "object",
-          "description": "Stats mapping categories to estimations and actual completion records"
-        }
+        "categories": { "type": "object" }
       },
       "required": ["userId", "categories"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "User application configurations.",
+      "type": "object",
+      "properties": {
+        "theme": { "type": "string" },
+        "soundEnabled": { "type": "boolean" },
+        "vibrationEnabled": { "type": "boolean" }
+      }
+    },
+    "Preferences": {
+      "title": "Preferences",
+      "description": "User preferences for cognitive pacing and performance windows.",
+      "type": "object",
+      "properties": {
+        "focusWindow": { "type": "string" },
+        "workingHoursStart": { "type": "string" },
+        "workingHoursEnd": { "type": "string" },
+        "sleepBedtime": { "type": "string" },
+        "sleepWakeTime": { "type": "string" }
+      }
+    },
+    "AIMemory": {
+      "title": "AIMemory",
+      "description": "Future AI memory structures for context preservation and learning trends.",
+      "type": "object",
+      "properties": {
+        "productivityPreferences": { "type": "object" },
+        "historicalCompletionTimes": { "type": "object" },
+        "energyTrends": { "type": "object" },
+        "burnoutHistory": { "type": "object" },
+        "aiPersonalization": { "type": "object" },
+        "recommendationHistory": { "type": "array" }
+      }
+    },
+    "Analytics": {
+      "title": "Analytics",
+      "description": "Future analytics data storage.",
+      "type": "object",
+      "properties": {
+        "productivityStats": { "type": "object" },
+        "dailySummaries": { "type": "object" },
+        "weeklySummaries": { "type": "object" },
+        "aiUsage": { "type": "object" },
+        "focusSessions": { "type": "object" },
+        "burnoutMetrics": { "type": "object" }
+      }
+    },
+    "Habit": {
+      "title": "Habit",
+      "description": "User habit tracking records.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "frequency": { "type": "string" },
+        "streak": { "type": "integer" }
+      }
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Cognitive notifications and system warnings log.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "message": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "User audit activity logging.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "timestamp": { "type": "string" }
+      }
+    },
+    "Usage": {
+      "title": "Usage",
+      "description": "User resource usage statistics.",
+      "type": "object",
+      "properties": {
+        "tokensUsed": { "type": "integer" },
+        "requestsCount": { "type": "integer" }
+      }
     }
   },
   "firestore": {
-    "tasks": {
-      "schema": { "$ref": "Task" },
-      "description": "Collection of tasks being tracked."
-    },
-    "calendar_events": {
-      "schema": { "$ref": "CalendarEvent" },
-      "description": "Blocks in the visual workspace calendar."
-    },
-    "focus_sessions": {
-      "schema": { "$ref": "FocusSession" },
-      "description": "Individual focused sessions tracked on subtasks."
-    },
-    "user_profiles": {
+    "/users/{userId}/profile/main": {
       "schema": { "$ref": "UserProfile" },
-      "description": "Gamification, streaks, and achievements profile."
+      "description": "Main profile document for user-scoped streaks and unlocked milestones."
     },
-    "learning_profiles": {
+    "/users/{userId}/profile/learning": {
       "schema": { "$ref": "LearningProfile" },
-      "description": "Adaptive time prediction profiles for task category velocities."
+      "description": "Dynamic time estimation multiplier mapping."
+    },
+    "/users/{userId}/settings/main": {
+      "schema": { "$ref": "Settings" },
+      "description": "Interface settings and parameters."
+    },
+    "/users/{userId}/preferences/main": {
+      "schema": { "$ref": "Preferences" },
+      "description": "Pacing rules preferences."
+    },
+    "/users/{userId}/aiMemory/main": {
+      "schema": { "$ref": "AIMemory" },
+      "description": "AI-personalization traits, energy indices, and history."
+    },
+    "/users/{userId}/analytics/main": {
+      "schema": { "$ref": "Analytics" },
+      "description": "Hourly focus sessions, burnout and stress patterns summaries."
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": { "$ref": "Task" },
+      "description": "Subcollection storing tasks belonging to the user."
+    },
+    "/users/{userId}/calendar/{eventId}": {
+      "schema": { "$ref": "CalendarEvent" },
+      "description": "Subcollection storing calendar blocks belonging to the user."
+    },
+    "/users/{userId}/habits/{habitId}": {
+      "schema": { "$ref": "Habit" },
+      "description": "Subcollection of active habits and cycles."
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": { "$ref": "Notification" },
+      "description": "Subcollection of alert signals and notification records."
+    },
+    "/users/{userId}/activity/{activityId}": {
+      "schema": { "$ref": "Activity" },
+      "description": "Subcollection of operational logs."
+    },
+    "/users/{userId}/usage/{usageId}": {
+      "schema": { "$ref": "Usage" },
+      "description": "Subcollection of token usage records."
     }
   }
 }

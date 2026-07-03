@@ -275,6 +275,47 @@ export default function Dashboard({
               )}
             </div>
 
+            {/* Cognitive Energy Allocation & Burnout Risk Shield */}
+            {activeTask && (
+              <div className="bg-[#111] border border-[#222] rounded-xl p-5 shadow-xl space-y-4">
+                <div className="flex items-center justify-between border-b border-[#222]/40 pb-2">
+                  <h4 className="text-xs font-bold font-mono uppercase tracking-widest text-white flex items-center gap-1.5">
+                    <Zap className="h-4 w-4 text-[#FF5C00]" />
+                    Cognitive Safeguard
+                  </h4>
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">
+                    Pacing Model
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="bg-[#0A0A0A] border border-[#222] p-2.5 rounded">
+                    <span className="text-[8px] font-mono uppercase text-slate-500 block">Mental Battery</span>
+                    <span className="font-mono text-slate-200 font-bold block mt-1 uppercase flex items-center gap-1">
+                      {activeTask.energyLevel === "low" ? "🪫 Depleted" : activeTask.energyLevel === "high" ? "🔋 Charged" : "⚡ Balanced"}
+                    </span>
+                  </div>
+                  <div className="bg-[#0A0A0A] border border-[#222] p-2.5 rounded">
+                    <span className="text-[8px] font-mono uppercase text-slate-500 block">Cognitive Burnout Risk</span>
+                    <span className={`font-mono font-bold block mt-1 ${
+                      (activeTask.burnoutRisk ?? 30) > 70 ? "text-red-500" : (activeTask.burnoutRisk ?? 30) > 40 ? "text-orange-500" : "text-emerald-400"
+                    }`}>
+                      {activeTask.burnoutRisk ?? 30}%
+                    </span>
+                  </div>
+                </div>
+
+                {activeTask.pacingSafetyRecommendation && (
+                  <div className="bg-[#0A0A0A] border border-[#222] rounded p-3 text-[11px] leading-relaxed text-slate-300">
+                    <div className="text-[9px] uppercase tracking-wider text-[#FF5C00] font-mono font-bold mb-1">
+                      🛡️ Pacing Shield Recommendation:
+                    </div>
+                    "{activeTask.pacingSafetyRecommendation}"
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Gamification Streaks & Performance manual */}
             {userProfile && (
               <div className="bg-[#111] border border-[#222] rounded-xl p-5 shadow-xl space-y-4">

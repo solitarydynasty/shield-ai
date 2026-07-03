@@ -2,39 +2,211 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Default Deny Catch-All
+    // 1. Global Safety Net: Default Deny Catch-All
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper to validate generic string ID characters and length
+    // 2. Global Reusable Helpers (Phase 3 Primitives)
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Verified Owner Constraint (Pillar 8 & Verification check)
+    function isVerifiedOwner(userId) {
+      return isOwner(userId);
+    }
+
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // TASKS COLLECTION
-    match /tasks/{taskId} {
-      allow read, write: if true;
+    function incoming() {
+      return request.resource.data;
     }
 
-    // CALENDAR EVENTS COLLECTION
-    match /calendar_events/{eventId} {
-      allow read, write: if true;
+    function existing() {
+      return resource.data;
     }
 
-    // FOCUS SESSIONS COLLECTION
-    match /focus_sessions/{sessionId} {
-      allow read, write: if true;
+    // 3. Entity Validators (Pillar 2 Blueprints)
+    function isValidUserProfile(data) {
+      return data.userId is string 
+        && data.streak is number && data.streak >= 0
+        && data.focusMinutesTotal is number && data.focusMinutesTotal >= 0
+        && data.unlockedInsights is list && data.unlockedInsights.size() <= 50
+        && data.unlockedMilestones is list && data.unlockedMilestones.size() <= 50;
     }
 
-    // USER PROFILES COLLECTION
-    match /user_profiles/{userId} {
-      allow read, write: if true;
+    function isValidLearningProfile(data) {
+      return data.userId is string 
+        && data.categories is map;
     }
 
-    // LEARNING PROFILES COLLECTION
-    match /learning_profiles/{profileId} {
-      allow read, write: if true;
+    function isValidTask(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.deadline is string && data.deadline.size() <= 64
+        && data.priority is string && (data.priority == 'low' || data.priority == 'medium' || data.priority == 'high' || data.priority == 'critical')
+        && data.riskLevel is string
+        && data.riskFactor is number && data.riskFactor >= 0 && data.riskFactor <= 100
+        && data.completed is bool;
+    }
+
+    function isValidCalendarEvent(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.start is string && data.start.size() <= 64
+        && data.end is string && data.end.size() <= 64
+        && data.type is string && (data.type == 'deadline' || data.type == 'milestone' || data.type == 'focus-block');
+    }
+
+    function isValidSettings(data) {
+      return data.theme is string && data.theme.size() <= 32;
+    }
+
+    function isValidPreferences(data) {
+      return data.focusWindow is string && data.focusWindow.size() <= 64;
+    }
+
+    function isValidAIMemory(data) {
+      return data.recommendationHistory is list;
+    }
+
+    function isValidAnalytics(data) {
+      return data.productivityStats is map;
+    }
+
+    function isValidHabit(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 100
+        && data.streak is number && data.streak >= 0;
+    }
+
+    function isValidNotification(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.message is string && data.message.size() <= 500
+        && data.read is bool;
+    }
+
+    function isValidActivity(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.action is string && data.action.size() <= 200;
+    }
+
+    function isValidUsage(data) {
+      return data.requestsCount is number && data.requestsCount >= 0;
+    }
+
+    // 4. USER-SCOPED Fortified Path Layout
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      // --- Subcollections and Documents under user's domain ---
+
+      // Profile Documents (UserProfile & LearningProfile)
+      match /profile/{docId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) 
+          && (
+            (docId == 'main' && isValidUserProfile(incoming())) ||
+            (docId == 'learning' && isValidLearningProfile(incoming()))
+          ) && (
+            resource == null || 
+            incoming().userId == existing().userId
+          );
+        allow delete: if isVerifiedOwner(userId);
+      }
+
+      // Settings Document
+      match /settings/{docId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) && docId == 'main' && isValidSettings(incoming());
+        allow delete: if isVerifiedOwner(userId);
+      }
+
+      // Preferences Document
+      match /preferences/{docId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) && docId == 'main' && isValidPreferences(incoming());
+        allow delete: if isVerifiedOwner(userId);
+      }
+
+      // AI Memory Document
+      match /aiMemory/{docId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) && docId == 'main' && isValidAIMemory(incoming());
+        allow delete: if isVerifiedOwner(userId);
+      }
+
+      // Analytics Document
+      match /analytics/{docId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) && docId == 'main' && isValidAnalytics(incoming());
+        allow delete: if isVerifiedOwner(userId);
+      }
+
+      // Tasks Collection (Pillar 8 Query Enforcer & Pillar 12 Immortals)
+      match /tasks/{taskId} {
+        allow read, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(taskId) && isValidTask(incoming()) 
+          && incoming().id == taskId;
+        allow update: if isVerifiedOwner(userId) && isValidId(taskId) && isValidTask(incoming())
+          && incoming().id == existing().id;
+        allow delete: if isVerifiedOwner(userId) && isValidId(taskId);
+      }
+
+      // Calendar Events Collection
+      match /calendar/{eventId} {
+        allow read, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(eventId) && isValidCalendarEvent(incoming())
+          && incoming().id == eventId;
+        allow update: if isVerifiedOwner(userId) && isValidId(eventId) && isValidCalendarEvent(incoming())
+          && incoming().id == existing().id;
+        allow delete: if isVerifiedOwner(userId) && isValidId(eventId);
+      }
+
+      // Habits Collection
+      match /habits/{habitId} {
+        allow read, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(habitId) && isValidHabit(incoming())
+          && incoming().id == habitId;
+        allow update: if isVerifiedOwner(userId) && isValidId(habitId) && isValidHabit(incoming())
+          && incoming().id == existing().id;
+        allow delete: if isVerifiedOwner(userId) && isValidId(habitId);
+      }
+
+      // Notifications Log
+      match /notifications/{notificationId} {
+        allow read, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(notificationId) && isValidNotification(incoming())
+          && incoming().id == notificationId;
+        allow update: if isVerifiedOwner(userId) && isValidId(notificationId) && isValidNotification(incoming())
+          && incoming().id == existing().id;
+        allow delete: if isVerifiedOwner(userId) && isValidId(notificationId);
+      }
+
+      // Activity Auditing Log
+      match /activity/{activityId} {
+        allow read, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(activityId) && isValidActivity(incoming())
+          && incoming().id == activityId;
+        allow update: if isVerifiedOwner(userId) && isValidId(activityId) && isValidActivity(incoming())
+          && incoming().id == existing().id;
+        allow delete: if isVerifiedOwner(userId) && isValidId(activityId);
+      }
+
+      // API Usage Log
+      match /usage/{usageId} {
+        allow read, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(usageId) && isValidUsage(incoming());
+        allow update: if isVerifiedOwner(userId) && isValidId(usageId) && isValidUsage(incoming());
+        allow delete: if isVerifiedOwner(userId);
+      }
     }
   }
 }

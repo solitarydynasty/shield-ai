@@ -6,11 +6,12 @@
 import React, { useState, useEffect } from "react";
 import { 
   Bot, Clock, Flame, LayoutDashboard, Calendar, HelpCircle, 
-  Settings, CheckCircle, ShieldAlert, Sparkles, X, PlusCircle 
+  Settings, CheckCircle, ShieldAlert, Sparkles, X, PlusCircle, LogOut
 } from "lucide-react";
 import { Task, Subtask, CalendarEvent, FocusSession, UserProfile, LearningProfile } from "./types";
-import { db } from "./lib/firebase";
-import { collection, getDocs, setDoc, doc, updateDoc } from "firebase/firestore";
+import { db, handleFirestoreError, OperationType, auth } from "./lib/firebase";
+import { collection, getDocs, getDoc, setDoc, deleteDoc, doc, updateDoc } from "firebase/firestore";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 
 import AICompanionAvatar from "./components/AICompanionAvatar";
 import Dashboard from "./components/Dashboard";
@@ -18,6 +19,9 @@ import TaskDecomposer from "./components/TaskDecomposer";
 import FocusRoom from "./components/FocusRoom";
 import IntegrationsHub from "./components/IntegrationsHub";
 import ActiveAICopilot from "./components/ActiveAICopilot";
+import AuthAndOnboarding from "./components/AuthAndOnboarding";
+import AIAdvisor from "./components/AIAdvisor";
+import { getDemoPersonaData } from "./lib/demoPersonas";
 
 const defaultUserProfile: UserProfile = {
   userId: "default",
@@ -43,6 +47,11 @@ const defaultLearningProfile: LearningProfile = {
 };
 
 export default function App() {
+  const [user, setUser] = useState<any>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
+  const [demoPersonaName, setDemoPersonaName] = useState<string | undefined>(undefined);
+
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -50,7 +59,8 @@ export default function App() {
   const [learningProfile, setLearningProfile] = useState<LearningProfile>(defaultLearningProfile);
   
   // Navigation & Modals
-  const [activeTab, setActiveTab] = useState<"dashboard" | "integrations" | "guide">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "integrations" | "advisor" | "guide">("dashboard");
+  const [cognitiveEnergyLevel, setCognitiveEnergyLevel] = useState<"low" | "medium" | "high">("medium");
   const [focusSubtask, setFocusSubtask] = useState<Subtask | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   
@@ -60,168 +70,457 @@ export default function App() {
 
   const activeTask = tasks.find(t => t.id === activeTaskId) || null;
 
+  // Offline sync queue helpers
+  const queuePendingSync = (type: "profile" | "learning_profile" | "task" | "event", docId: string, data: any) => {
+    const uid = user?.uid || "default";
+    const queueKey = `shieldai_pending_sync_${uid}`;
+    let queue: any[] = [];
+    try {
+      const existingRaw = localStorage.getItem(queueKey);
+      if (existingRaw) queue = JSON.parse(existingRaw);
+    } catch (e) {}
+
+    // Deduplicate: remove older operations of same type & docId to prevent redundant updates
+    queue = queue.filter(item => !(item.type === type && item.docId === docId));
+
+    queue.push({
+      type,
+      docId,
+      data,
+      timestamp: Date.now()
+    });
+
+    localStorage.setItem(queueKey, JSON.stringify(queue));
+    console.log(`[ShieldAI] Offline queued sync for ${type}/${docId}`);
+  };
+
+  const syncPendingQueue = async () => {
+    if (!db || !user || !navigator.onLine || isDemoMode) return;
+    const uid = user.uid;
+    const queueKey = `shieldai_pending_sync_${uid}`;
+    let queue: any[] = [];
+    try {
+      const existingRaw = localStorage.getItem(queueKey);
+      if (existingRaw) queue = JSON.parse(existingRaw);
+    } catch (e) {
+      return;
+    }
+
+    if (queue.length === 0) return;
+
+    console.log(`[ShieldAI] Processing ${queue.length} pending offline writes...`);
+    const failedItems: any[] = [];
+
+    for (const item of queue) {
+      try {
+        if (item.type === "profile") {
+          await setDoc(doc(db, "users", uid, "profile", "main"), item.data);
+        } else if (item.type === "learning_profile") {
+          await setDoc(doc(db, "users", uid, "profile", "learning"), item.data);
+        } else if (item.type === "task") {
+          await setDoc(doc(db, "users", uid, "tasks", item.docId), item.data);
+        } else if (item.type === "event") {
+          await setDoc(doc(db, "users", uid, "calendar", item.docId), item.data);
+        }
+      } catch (err) {
+        console.error(`[ShieldAI] Failed syncing pending item ${item.type}/${item.docId}:`, err);
+        failedItems.push(item);
+      }
+    }
+
+    if (failedItems.length > 0) {
+      localStorage.setItem(queueKey, JSON.stringify(failedItems));
+    } else {
+      localStorage.removeItem(queueKey);
+      console.log("[ShieldAI] All offline writes successfully synchronized.");
+    }
+  };
+
+  // 1. Database Migration: Migrate users from flat schema v1 to user-scoped schema v2 (idempotent & safe)
+  const runDatabaseMigration = async (currentUser: any) => {
+    const uid = currentUser.uid;
+    const migrationKey = `shieldai_migrated_v2_${uid}`;
+    
+    // Idempotency check: if already completed locally, skip
+    if (localStorage.getItem(migrationKey) === "true") {
+      return;
+    }
+
+    console.log("[ShieldAI] Initiating database migration to hierarchical v2 schema...");
+    let oldTasks: Task[] = [];
+    let oldEvents: CalendarEvent[] = [];
+    let oldProfile: UserProfile | null = null;
+    let oldLearning: LearningProfile | null = null;
+
+    // A. Read from legacy flat LocalStorage
+    try {
+      const legacyTasksRaw = localStorage.getItem("shieldai_tasks");
+      if (legacyTasksRaw) oldTasks = JSON.parse(legacyTasksRaw);
+      
+      const legacyEventsRaw = localStorage.getItem("shieldai_events");
+      if (legacyEventsRaw) oldEvents = JSON.parse(legacyEventsRaw);
+
+      const legacyProfileRaw = localStorage.getItem("shieldai_user_profile");
+      if (legacyProfileRaw) oldProfile = JSON.parse(legacyProfileRaw);
+
+      const legacyLearningRaw = localStorage.getItem("shieldai_learning_profile");
+      if (legacyLearningRaw) oldLearning = JSON.parse(legacyLearningRaw);
+    } catch (err) {
+      console.warn("[ShieldAI] Legacy LocalStorage parse error", err);
+    }
+
+    // B. Read from legacy flat Firestore collections
+    if (db) {
+      try {
+        const profileRef = doc(db, "user_profiles", uid);
+        const pSnap = await getDoc(profileRef);
+        if (pSnap.exists()) {
+          oldProfile = pSnap.data() as UserProfile;
+        }
+
+        const learningRef = doc(db, "learning_profiles", uid);
+        const lSnap = await getDoc(learningRef);
+        if (lSnap.exists()) {
+          oldLearning = lSnap.data() as LearningProfile;
+        }
+      } catch (err) {
+        console.warn("[ShieldAI] Legacy Firestore retrieval failed (which is expected with active security rules)", err);
+      }
+    }
+
+    // C. Write to new nested paths
+    try {
+      if (db) {
+        const finalProfile = {
+          ...(oldProfile || defaultUserProfile),
+          userId: uid,
+          migrated_v2: true
+        };
+        await setDoc(doc(db, "users", uid, "profile", "main"), finalProfile);
+
+        const finalLearning = {
+          ...(oldLearning || defaultLearningProfile),
+          userId: uid
+        };
+        await setDoc(doc(db, "users", uid, "profile", "learning"), finalLearning);
+
+        for (const task of oldTasks) {
+          await setDoc(doc(db, "users", uid, "tasks", task.id), {
+            ...task,
+            userId: uid
+          });
+        }
+
+        for (const ev of oldEvents) {
+          await setDoc(doc(db, "users", uid, "calendar", ev.id), {
+            ...ev,
+            userId: uid
+          });
+        }
+      }
+
+      // D. Write to user-scoped LocalStorage
+      const scopedTasksKey = `shieldai_tasks_${uid}`;
+      const scopedEventsKey = `shieldai_events_${uid}`;
+      const scopedProfileKey = `shieldai_user_profile_${uid}`;
+      const scopedLearningKey = `shieldai_learning_profile_${uid}`;
+
+      if (oldTasks.length > 0) {
+        localStorage.setItem(scopedTasksKey, JSON.stringify(oldTasks));
+      }
+      if (oldEvents.length > 0) {
+        localStorage.setItem(scopedEventsKey, JSON.stringify(oldEvents));
+      }
+      localStorage.setItem(scopedProfileKey, JSON.stringify({ ...(oldProfile || defaultUserProfile), userId: uid, migrated_v2: true }));
+      localStorage.setItem(scopedLearningKey, JSON.stringify({ ...(oldLearning || defaultLearningProfile), userId: uid }));
+
+      localStorage.setItem(migrationKey, "true");
+      console.log("[ShieldAI] Database migration completed successfully.");
+    } catch (migrationErr) {
+      console.error("[ShieldAI] Database migration failed. Rolling back.", migrationErr);
+    }
+  };
+
   // Savers for profiles
   const saveUserProfile = async (profile: UserProfile) => {
     setUserProfile(profile);
-    localStorage.setItem("shieldai_user_profile", JSON.stringify(profile));
+    localStorage.setItem(`shieldai_user_profile_${profile.userId}`, JSON.stringify(profile));
     if (db) {
       try {
-        await setDoc(doc(db, "user_profiles", "default"), profile);
-        console.log("[ShieldAI] User profile synchronized with Firestore.");
+        await setDoc(doc(db, "users", profile.userId, "profile", "main"), profile);
+        console.log(`[ShieldAI] User profile synchronized with Firestore for ${profile.userId}.`);
       } catch (e) {
-        console.error("Failed to sync user profile to Firestore", e);
+        console.warn("Failed to sync user profile, queuing write...", e);
+        queuePendingSync("profile", "main", profile);
       }
     }
   };
 
   const saveLearningProfile = async (profile: LearningProfile) => {
     setLearningProfile(profile);
-    localStorage.setItem("shieldai_learning_profile", JSON.stringify(profile));
+    localStorage.setItem(`shieldai_learning_profile_${profile.userId}`, JSON.stringify(profile));
     if (db) {
       try {
-        await setDoc(doc(db, "learning_profiles", "default"), profile);
-        console.log("[ShieldAI] Learning profile synchronized with Firestore.");
+        await setDoc(doc(db, "users", profile.userId, "profile", "learning"), profile);
+        console.log(`[ShieldAI] Learning profile synchronized with Firestore for ${profile.userId}.`);
       } catch (e) {
-        console.error("Failed to sync learning profile to Firestore", e);
+        console.warn("Failed to sync learning profile, queuing write...", e);
+        queuePendingSync("learning_profile", "learning", profile);
       }
     }
   };
 
-  // 1. Initial Load of Tasks (Offline-First: Firestore with LocalStorage Fallback)
+  // 1. Initial Load of Auth and Profiles (with offline-first user-scoped local caches)
   useEffect(() => {
-    async function loadData() {
-      let loadedTasks: Task[] = [];
-      let loadedEvents: CalendarEvent[] = [];
-      let loadedProfile: UserProfile | null = null;
-      let loadedLearning: LearningProfile | null = null;
-
-      // Try Firestore First
-      if (db) {
-        try {
-          console.log("[ShieldAI] Querying Firestore for active profile...");
-          const querySnapshot = await getDocs(collection(db, "tasks"));
-          querySnapshot.forEach((docSnap) => {
-            loadedTasks.push(docSnap.data() as Task);
-          });
-
-          const eventSnapshot = await getDocs(collection(db, "calendar_events"));
-          eventSnapshot.forEach((docSnap) => {
-            loadedEvents.push(docSnap.data() as CalendarEvent);
-          });
-
-          const profileDoc = await getDocs(collection(db, "user_profiles"));
-          profileDoc.forEach((docSnap) => {
-            if (docSnap.id === "default") {
-              loadedProfile = docSnap.data() as UserProfile;
-            }
-          });
-
-          const learningDoc = await getDocs(collection(db, "learning_profiles"));
-          learningDoc.forEach((docSnap) => {
-            if (docSnap.id === "default") {
-              loadedLearning = docSnap.data() as LearningProfile;
-            }
-          });
-        } catch (error) {
-          console.error("[ShieldAI] Firestore load error, using LocalStorage fallback.", error);
-        }
-      }
-
-      // LocalStorage Fallback if Firestore empty or failed
-      if (loadedTasks.length === 0) {
-        const cached = localStorage.getItem("shieldai_tasks");
-        if (cached) {
-          try {
-            loadedTasks = JSON.parse(cached);
-          } catch (e) {
-            console.error("Failed to parse cached tasks:", e);
-          }
-        }
-      }
-
-      if (loadedEvents.length === 0) {
-        const cachedEv = localStorage.getItem("shieldai_events");
-        if (cachedEv) {
-          try {
-            loadedEvents = JSON.parse(cachedEv);
-          } catch (e) {
-            console.error("Failed to parse cached events:", e);
-          }
-        }
-      }
-
-      if (!loadedProfile) {
-        const cachedProf = localStorage.getItem("shieldai_user_profile");
-        if (cachedProf) {
-          try {
-            loadedProfile = JSON.parse(cachedProf);
-          } catch (e) {
-            console.error("Failed to parse cached user profile:", e);
-          }
-        }
-      }
-
-      if (!loadedLearning) {
-        const cachedLearn = localStorage.getItem("shieldai_learning_profile");
-        if (cachedLearn) {
-          try {
-            loadedLearning = JSON.parse(cachedLearn);
-          } catch (e) {
-            console.error("Failed to parse cached learning profile:", e);
-          }
-        }
-      }
-
-      setTasks(loadedTasks);
-      setEvents(loadedEvents);
-      setUserProfile(loadedProfile || defaultUserProfile);
-      setLearningProfile(loadedLearning || defaultLearningProfile);
-
-      if (loadedTasks.length > 0) {
-        setActiveTaskId(loadedTasks[0].id);
-        
-        // Evaluate dynamic initial AI avatar state
-        const maxRisk = Math.max(...loadedTasks.map(t => t.riskFactor));
-        if (maxRisk > 70) {
-          setAiState("alarm");
-          setAiMessage("Critical risks identified on active deadlines! Initiate Focus Room block immediately.");
-        } else {
-          setAiState("calm");
-          setAiMessage("Timeline is secure. Let's stay on track, partner.");
-        }
-      }
+    if (!auth) {
+      console.warn("[ShieldAI] Firebase Auth not available. Using offline state.");
+      return;
     }
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        setIsAuthenticated(true);
+        setIsDemoMode(false);
+        setDemoPersonaName(undefined);
 
-    loadData();
+        // Run database migration first
+        await runDatabaseMigration(currentUser);
+
+        let loadedProfile: UserProfile | null = null;
+        let loadedLearning: LearningProfile | null = null;
+
+        if (db) {
+          try {
+            const pSnap = await getDoc(doc(db, "users", currentUser.uid, "profile", "main"));
+            if (pSnap.exists()) {
+              loadedProfile = pSnap.data() as UserProfile;
+            }
+
+            const lSnap = await getDoc(doc(db, "users", currentUser.uid, "profile", "learning"));
+            if (lSnap.exists()) {
+              loadedLearning = lSnap.data() as LearningProfile;
+            }
+          } catch (err) {
+            console.error("[ShieldAI] Firestore error on login loading profiles:", err);
+          }
+        }
+
+        if (!loadedProfile) {
+          const cachedProf = localStorage.getItem(`shieldai_user_profile_${currentUser.uid}`);
+          if (cachedProf) {
+            try { loadedProfile = JSON.parse(cachedProf); } catch (e) {}
+          }
+        }
+        if (!loadedLearning) {
+          const cachedLearn = localStorage.getItem(`shieldai_learning_profile_${currentUser.uid}`);
+          if (cachedLearn) {
+            try { loadedLearning = JSON.parse(cachedLearn); } catch (e) {}
+          }
+        }
+
+        if (loadedProfile) {
+          setUserProfile(loadedProfile);
+        } else {
+          setUserProfile({
+            ...defaultUserProfile,
+            userId: currentUser.uid,
+            onboardingComplete: false
+          });
+        }
+
+        if (loadedLearning) {
+          setLearningProfile(loadedLearning);
+        } else {
+          setLearningProfile({
+            ...defaultLearningProfile,
+            userId: currentUser.uid
+          });
+        }
+
+        let loadedTasks: Task[] = [];
+        let loadedEvents: CalendarEvent[] = [];
+
+        if (db) {
+          try {
+            const tasksSnap = await getDocs(collection(db, "users", currentUser.uid, "tasks"));
+            tasksSnap.forEach((docSnap) => {
+              loadedTasks.push(docSnap.data() as Task);
+            });
+
+            const eventsSnap = await getDocs(collection(db, "users", currentUser.uid, "calendar"));
+            eventsSnap.forEach((docSnap) => {
+              loadedEvents.push(docSnap.data() as CalendarEvent);
+            });
+          } catch (err) {
+            console.error("[ShieldAI] Firestore error on login loading tasks/events:", err);
+          }
+        }
+
+        if (loadedTasks.length === 0) {
+          const cachedTasks = localStorage.getItem(`shieldai_tasks_${currentUser.uid}`);
+          if (cachedTasks) {
+            try { loadedTasks = JSON.parse(cachedTasks); } catch (e) {}
+          }
+        }
+        if (loadedEvents.length === 0) {
+          const cachedEvents = localStorage.getItem(`shieldai_events_${currentUser.uid}`);
+          if (cachedEvents) {
+            try { loadedEvents = JSON.parse(cachedEvents); } catch (e) {}
+          }
+        }
+
+        setTasks(loadedTasks);
+        setEvents(loadedEvents);
+        if (loadedTasks.length > 0) {
+          setActiveTaskId(loadedTasks[0].id);
+        } else {
+          setActiveTaskId(null);
+        }
+
+        // Trigger sync of any queued offline writes
+        await syncPendingQueue();
+      } else {
+        // Sign out / No active user
+        setUser(null);
+        setIsAuthenticated(false);
+        setIsDemoMode(false);
+        setDemoPersonaName(undefined);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  // 2. Persist Tasks Helper
+  // Offline sync connectivity trigger
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log("[ShieldAI] Connectivity restored. Synchronizing database...");
+      syncPendingQueue();
+    };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [user]);
+
+  const handleLoadDemoData = (persona: "student" | "professional" | "entrepreneur") => {
+    const demoData = getDemoPersonaData(persona);
+    setUser(demoData.user);
+    setIsAuthenticated(true);
+    setIsDemoMode(true);
+    setDemoPersonaName(persona);
+    
+    setUserProfile(demoData.userProfile);
+    setLearningProfile(demoData.learningProfile);
+    setTasks(demoData.tasks);
+    setEvents(demoData.events);
+    
+    if (demoData.tasks.length > 0) {
+      setActiveTaskId(demoData.tasks[0].id);
+    } else {
+      setActiveTaskId(null);
+    }
+    
+    setAiState("calm");
+    setAiMessage(demoData.aiMessage);
+    
+    localStorage.setItem(`shieldai_user_profile_${demoData.user.uid}`, JSON.stringify(demoData.userProfile));
+    localStorage.setItem(`shieldai_learning_profile_${demoData.user.uid}`, JSON.stringify(demoData.learningProfile));
+    localStorage.setItem(`shieldai_tasks_${demoData.user.uid}`, JSON.stringify(demoData.tasks));
+    localStorage.setItem(`shieldai_events_${demoData.user.uid}`, JSON.stringify(demoData.events));
+  };
+
+  const handleAuthSuccess = async (authUserObj: any, profile: UserProfile, isDemo: boolean) => {
+    const userObj = authUserObj || { uid: "mock-google-user-123", displayName: profile.onboarding?.fullName };
+    setUser(userObj);
+    setIsAuthenticated(true);
+    setIsDemoMode(isDemo);
+    setDemoPersonaName(undefined);
+    
+    const lProfile = {
+      ...defaultLearningProfile,
+      userId: profile.userId
+    };
+
+    setUserProfile(profile);
+    setLearningProfile(lProfile);
+    
+    await saveUserProfile(profile);
+    await saveLearningProfile(lProfile);
+    
+    setTasks([]);
+    setEvents([]);
+    setActiveTaskId(null);
+    
+    setAiState("calm");
+    setAiMessage(`Welcome, ${profile.onboarding?.fullName || "Agent"}. Cognitive Shield is online. Prepare your first task.`);
+  };
+
+  const handleSignOut = async () => {
+    if (auth && !isDemoMode) {
+      try {
+        await signOut(auth);
+      } catch (err) {
+        console.error("[ShieldAI] Error signing out:", err);
+      }
+    }
+    setUser(null);
+    setIsAuthenticated(false);
+    setIsDemoMode(false);
+    setDemoPersonaName(undefined);
+    setTasks([]);
+    setEvents([]);
+    setUserProfile(defaultUserProfile);
+    setLearningProfile(defaultLearningProfile);
+    setActiveTaskId(null);
+    setAiState("calm");
+    setAiMessage("Shield core online. Feed me your mission deadlines.");
+  };
+
+  // 2. Persist Tasks Helper (User-Scoped)
   const saveTasks = async (updatedTasks: Task[]) => {
     setTasks(updatedTasks);
-    localStorage.setItem("shieldai_tasks", JSON.stringify(updatedTasks));
+    const uid = user?.uid || "default";
+    localStorage.setItem(`shieldai_tasks_${uid}`, JSON.stringify(updatedTasks));
 
-    if (db) {
+    if (db && user && !isDemoMode) {
       try {
         for (const task of updatedTasks) {
-          await setDoc(doc(db, "tasks", task.id), task);
+          try {
+            await setDoc(doc(db, "users", user.uid, "tasks", task.id), {
+              ...task,
+              userId: user.uid
+            });
+          } catch (e) {
+            console.warn(`Failed to sync task ${task.id}, queuing write...`, e);
+            queuePendingSync("task", task.id, { ...task, userId: user.uid });
+          }
         }
-        console.log("[ShieldAI] Database updated securely.");
+        console.log("[ShieldAI] Tasks synchronized with user-scoped Firestore.");
       } catch (error) {
         console.error("[ShieldAI] Failed to sync tasks with database:", error);
       }
     }
   };
 
-  // 3. Persist Events Helper
+  // 3. Persist Events Helper (User-Scoped)
   const saveEvents = async (updatedEvents: CalendarEvent[]) => {
     setEvents(updatedEvents);
-    localStorage.setItem("shieldai_events", JSON.stringify(updatedEvents));
+    const uid = user?.uid || "default";
+    localStorage.setItem(`shieldai_events_${uid}`, JSON.stringify(updatedEvents));
 
-    if (db) {
+    if (db && user && !isDemoMode) {
       try {
         for (const ev of updatedEvents) {
-          await setDoc(doc(db, "calendar_events", ev.id), ev);
+          try {
+            await setDoc(doc(db, "users", user.uid, "calendar", ev.id), {
+              ...ev,
+              userId: user.uid
+            });
+          } catch (e) {
+            console.warn(`Failed to sync event ${ev.id}, queuing write...`, e);
+            queuePendingSync("event", ev.id, { ...ev, userId: user.uid });
+          }
         }
+        console.log("[ShieldAI] Calendar events synchronized with user-scoped Firestore.");
       } catch (error) {
         console.error("[ShieldAI] Failed to sync events with database:", error);
       }
@@ -374,9 +673,12 @@ export default function App() {
   // 7. Complete Focus Session
   const handleSessionComplete = async (session: FocusSession) => {
     // Sync focus session to database if possible
-    if (db) {
+    if (db && user && !isDemoMode) {
       try {
-        await setDoc(doc(db, "focus_sessions", session.id), session);
+        await setDoc(doc(db, "users", user.uid, "activity", session.id), {
+          ...session,
+          userId: user.uid
+        });
       } catch (e) {
         console.error("Failed to persist session to database", e);
       }
@@ -600,8 +902,17 @@ export default function App() {
     }
   };
 
+  if (!isAuthenticated || !userProfile?.onboardingComplete) {
+    return (
+      <AuthAndOnboarding 
+        onAuthSuccess={handleAuthSuccess}
+        onLoadDemoData={handleLoadDemoData}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-[#F5F5F5] font-sans antialiased relative">
+    <div className="min-h-screen bg-[#0A0A0A] text-[#F5F5F5] font-sans antialiased relative animate-fade-in">
       {/* Visual background decorations */}
       <div className="absolute top-0 left-0 right-0 h-[400px] bg-gradient-to-b from-[#FF5C00]/5 to-transparent pointer-events-none"></div>
 
@@ -621,12 +932,61 @@ export default function App() {
             <p className="text-[11px] text-slate-400 mt-1 uppercase tracking-wider">The Ultimate Proactive Hackathon Deadline Companion</p>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center flex-wrap gap-3">
+            {/* Active User Label */}
+            <div className="flex flex-col text-right hidden sm:flex">
+              <span className="text-xs font-bold text-slate-100">{user?.displayName || "Agent"}</span>
+              <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                {isDemoMode ? `Demo: ${demoPersonaName?.toUpperCase()}` : userProfile.onboarding?.occupation || "Active Agent"}
+              </span>
+            </div>
+
+            {/* Permanent Trial Mode Switcher Dropdown */}
+            <div className="relative group">
+              <button className="bg-[#111] hover:bg-[#1A1A1A] text-slate-300 hover:text-white border border-[#222] hover:border-[#FF5C00]/40 px-3 py-1.5 rounded text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer font-bold uppercase tracking-wider">
+                <Sparkles className="h-3.5 w-3.5 text-[#FF5C00]" />
+                <span>Demo Switcher</span>
+              </button>
+              <div className="absolute right-0 mt-1 w-52 bg-[#0C0C0C] border border-[#222] rounded-lg shadow-2xl py-1 z-50 hidden group-hover:block hover:block">
+                <button
+                  onClick={() => handleLoadDemoData("student")}
+                  className={`w-full text-left px-4 py-2 text-xs font-mono hover:bg-[#1A1A1A] transition-all flex flex-col gap-0.5 ${demoPersonaName === "student" ? "text-[#FF5C00]" : "text-slate-300"}`}
+                >
+                  <span className="font-bold">🎓 Student Demo</span>
+                  <span className="text-[9px] text-slate-500 uppercase">Alex (CS Student)</span>
+                </button>
+                <button
+                  onClick={() => handleLoadDemoData("professional")}
+                  className={`w-full text-left px-4 py-2 text-xs font-mono hover:bg-[#1A1A1A] transition-all flex flex-col gap-0.5 ${demoPersonaName === "professional" ? "text-[#FF5C00]" : "text-slate-300"}`}
+                >
+                  <span className="font-bold">💼 Professional Demo</span>
+                  <span className="text-[9px] text-slate-500 uppercase">Sarah (UX Architect)</span>
+                </button>
+                <button
+                  onClick={() => handleLoadDemoData("entrepreneur")}
+                  className={`w-full text-left px-4 py-2 text-xs font-mono hover:bg-[#1A1A1A] transition-all flex flex-col gap-0.5 ${demoPersonaName === "entrepreneur" ? "text-[#FF5C00]" : "text-slate-300"}`}
+                >
+                  <span className="font-bold">🚀 Entrepreneur Demo</span>
+                  <span className="text-[9px] text-slate-500 uppercase">Marcus (SaaS Founder)</span>
+                </button>
+              </div>
+            </div>
+
             {/* Streak Counter */}
             <div className="flex items-center gap-1.5 bg-[#111] border border-[#222] px-3.5 py-1.5 rounded text-xs font-mono text-[#F5F5F5] uppercase tracking-wider">
               <Flame className="h-4 w-4 text-[#FF5C00]" />
               <span>{userProfile.streak} focus-streaks secure</span>
             </div>
+
+            {/* Logout Button */}
+            <button
+              onClick={handleSignOut}
+              className="bg-transparent hover:bg-red-950/20 text-slate-400 hover:text-red-400 border border-[#222] hover:border-red-500/20 px-3 py-1.5 rounded text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer font-bold uppercase tracking-wider"
+              title="Disconnect Security Shield"
+            >
+              <LogOut className="h-3.5 w-3.5" strokeWidth={2.5} />
+              <span>Sign Out</span>
+            </button>
           </div>
         </div>
       </header>
@@ -713,6 +1073,17 @@ export default function App() {
                 Mission Terminal
               </button>
               <button
+                onClick={() => setActiveTab("advisor")}
+                className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 flex items-center gap-2 ${
+                  activeTab === "advisor"
+                    ? "border-[#FF5C00] text-[#FF5C00] bg-[#FF5C00]/5 italic"
+                    : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Sparkles className="h-4 w-4 text-[#FF5C00]" />
+                AI Advisor
+              </button>
+              <button
                 onClick={() => setActiveTab("integrations")}
                 className={`px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 flex items-center gap-2 ${
                   activeTab === "integrations"
@@ -759,9 +1130,28 @@ export default function App() {
                     onTriggerRescue={(actionTitle) => {
                       if (activeTask) handleCalibrate(activeTask);
                     }}
+                    allTasks={tasks}
+                    calendarEvents={events}
+                    cognitiveEnergyLevel={cognitiveEnergyLevel}
                   />
                 </div>
               </div>
+            )}
+
+            {activeTab === "advisor" && (
+              <AIAdvisor 
+                tasks={tasks}
+                events={events}
+                userProfile={userProfile}
+                learningProfile={learningProfile}
+                cognitiveEnergyLevel={cognitiveEnergyLevel}
+                onSetCognitiveEnergyLevel={setCognitiveEnergyLevel}
+                onEnterFocus={(task, subtask) => {
+                  setActiveTaskId(task.id);
+                  setFocusSubtask(subtask);
+                }}
+                onNavigateToTab={(tab) => setActiveTab(tab)}
+              />
             )}
 
             {activeTab === "integrations" && (

@@ -5,14 +5,23 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { Sparkles, Send, Bot, User, Trash2, Cpu, Zap, Compass } from "lucide-react";
-import { ChatMessage, Task } from "../types";
+import { ChatMessage, Task, CalendarEvent } from "../types";
 
 interface ActiveAICopilotProps {
   activeTask: Task | null;
   onTriggerRescue: (actionTitle: string) => void;
+  allTasks?: Task[];
+  calendarEvents?: CalendarEvent[];
+  cognitiveEnergyLevel?: "low" | "medium" | "high";
 }
 
-export default function ActiveAICopilot({ activeTask, onTriggerRescue }: ActiveAICopilotProps) {
+export default function ActiveAICopilot({ 
+  activeTask, 
+  onTriggerRescue,
+  allTasks = [],
+  calendarEvents = [],
+  cognitiveEnergyLevel = "medium"
+}: ActiveAICopilotProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "init-1",
@@ -93,7 +102,22 @@ export default function ActiveAICopilot({ activeTask, onTriggerRescue }: ActiveA
             riskLevel: activeTask.riskLevel,
             completedSubtasks: activeTask.subtasks.filter(s => s.completed).map(s => s.title),
             pendingSubtasks: activeTask.subtasks.filter(s => !s.completed).map(s => s.title),
-          } : null
+            burnoutRisk: activeTask.burnoutRisk || 0,
+          } : null,
+          allTasks: allTasks ? allTasks.map(t => ({
+            title: t.title,
+            priority: t.priority,
+            riskLevel: t.riskLevel,
+            completed: t.completed,
+            burnoutRisk: t.burnoutRisk || 0
+          })) : [],
+          calendarEvents: calendarEvents ? calendarEvents.map(e => ({
+            title: e.title,
+            type: e.type,
+            start: e.start,
+            end: e.end
+          })) : [],
+          cognitiveEnergyLevel: cognitiveEnergyLevel || "medium"
         })
       });
 

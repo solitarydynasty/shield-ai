@@ -17,6 +17,7 @@ export default function TaskDecomposer({ onDecomposeComplete, userHabits }: Task
   const [deadline, setDeadline] = useState("");
   const [context, setContext] = useState("");
   const [priority, setPriority] = useState<"low" | "medium" | "high" | "critical">("high");
+  const [energyLevel, setEnergyLevel] = useState<"low" | "medium" | "high">("medium");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -53,7 +54,7 @@ export default function TaskDecomposer({ onDecomposeComplete, userHabits }: Task
       const response = await fetch("/api/ai/decompose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, deadline, context, priority, userHabits }),
+        body: JSON.stringify({ title, deadline, context, priority, userHabits, energyLevel }),
       });
 
       if (!response.ok) {
@@ -81,6 +82,9 @@ export default function TaskDecomposer({ onDecomposeComplete, userHabits }: Task
         rescueTriggers: rawData.rescueTriggers,
         createdAt: new Date().toISOString(),
         completed: false,
+        energyLevel,
+        burnoutRisk: rawData.burnoutRisk ?? (energyLevel === "low" ? 80 : energyLevel === "medium" ? 45 : 20),
+        pacingSafetyRecommendation: rawData.pacingSafetyRecommendation || "Main standard focus blocks."
       };
 
       onDecomposeComplete(newTask);
@@ -138,7 +142,7 @@ export default function TaskDecomposer({ onDecomposeComplete, userHabits }: Task
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider font-mono">
                 Target Deadline
@@ -166,6 +170,21 @@ export default function TaskDecomposer({ onDecomposeComplete, userHabits }: Task
                 <option value="medium">Medium Priority</option>
                 <option value="high">High Priority (Normal)</option>
                 <option value="critical">Critical Deadline (Launch/Pitch)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider font-mono">
+                Cognitive Energy Level
+              </label>
+              <select
+                value={energyLevel}
+                onChange={(e: any) => setEnergyLevel(e.target.value)}
+                className="w-full bg-[#0A0A0A] border border-[#222] focus:border-[#FF5C00] focus:ring-1 focus:ring-[#FF5C00] rounded px-4 py-3 text-sm text-slate-100 transition-colors [color-scheme:dark] outline-none"
+              >
+                <option value="high">🔋 Charged & Focused</option>
+                <option value="medium">⚡ Balanced State</option>
+                <option value="low">🪫 Fatigued / Depleted</option>
               </select>
             </div>
           </div>

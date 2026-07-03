@@ -20,8 +20,41 @@ export default function FocusRoom({ activeSubtask, onSessionComplete, onExit }: 
   const [completedSessionsCount, setCompletedSessionsCount] = useState(0);
   const [streak, setStreak] = useState(3); // Mock initial streak for gamification
   const [encouragement, setEncouragement] = useState("Let's secure this block. No distractions, partner.");
+  const [distractionLevel, setDistractionLevel] = useState(20);
+  const [breathingActive, setBreathingActive] = useState(false);
+  const [breathingPhase, setBreathingPhase] = useState<"Inhale" | "Hold" | "Exhale" | "Rest">("Inhale");
+  const [breathingSeconds, setBreathingSeconds] = useState(4);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Box Breathing Guide Timer Loop
+  useEffect(() => {
+    if (!breathingActive) return;
+
+    const bTimer = setInterval(() => {
+      setBreathingSeconds((prev) => {
+        if (prev <= 1) {
+          setBreathingPhase((curr) => {
+            switch (curr) {
+              case "Inhale":
+                return "Hold";
+              case "Hold":
+                return "Exhale";
+              case "Exhale":
+                return "Rest";
+              case "Rest":
+              default:
+                return "Inhale";
+            }
+          });
+          return 4;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(bTimer);
+  }, [breathingActive]);
 
   useEffect(() => {
     if (activeSubtask) {
@@ -217,6 +250,98 @@ export default function FocusRoom({ activeSubtask, onSessionComplete, onExit }: 
             {ambientSound !== "none" && <span className="font-mono uppercase text-[9px]">{ambientSound}</span>}
           </button>
         </div>
+      </div>
+
+      {/* Dynamic Procrastination & Distraction Check-in Slider */}
+      <div className="w-full bg-[#111] border border-[#222] rounded-xl p-4 z-10 mb-5 space-y-3">
+        <div className="flex justify-between items-center">
+          <label className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold">
+            Live Stress / Procrastination Radar:
+          </label>
+          <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+            distractionLevel > 60 ? "text-red-400 bg-red-950/40 border border-red-500/20" : distractionLevel > 30 ? "text-orange-400 bg-orange-950/40" : "text-emerald-400 bg-emerald-950/40"
+          }`}>
+            {distractionLevel > 60 ? "⚠️ Heavy Distraction" : distractionLevel > 30 ? "⚡ Mild Drift" : "🎯 Laser Locked"}
+          </span>
+        </div>
+        <input 
+          type="range"
+          min="0"
+          max="100"
+          value={distractionLevel}
+          onChange={(e) => {
+            const val = Number(e.target.value);
+            setDistractionLevel(val);
+            if (val > 60) {
+              setEncouragement("Emergency focus break recommended! Push the 'Box Breathing' reset button below to flush cortisol.");
+            } else if (val > 30) {
+              setEncouragement("A slight attention leak detected. Stand up, roll your shoulders, and focus back.");
+            } else {
+              setEncouragement("Neural performance is optimal. Keep shipping.");
+            }
+          }}
+          className="w-full accent-[#FF5C00] bg-slate-900 h-1.5 rounded-lg appearance-none cursor-pointer"
+        />
+        
+        {/* Dynamic Reset Action trigger if highly distracted or requested */}
+        <div className="flex justify-between items-center pt-1 border-t border-[#222]/40">
+          <span className="text-[10px] text-slate-400">Cortisol flush:</span>
+          <button
+            type="button"
+            onClick={() => {
+              const nextState = !breathingActive;
+              setBreathingActive(nextState);
+              if (nextState) {
+                setBreathingPhase("Inhale");
+                setBreathingSeconds(4);
+              }
+            }}
+            className={`text-[9px] font-mono uppercase tracking-wider font-black px-3 py-1.5 rounded transition-all cursor-pointer ${
+              breathingActive 
+                ? "bg-emerald-600 hover:bg-emerald-500 text-white" 
+                : "bg-slate-900 hover:bg-[#1A1A1A] border border-[#333] text-slate-300"
+            }`}
+          >
+            {breathingActive ? "⏹️ Stop Box Breath" : "🧘 Start 1m Box Breath Reset"}
+          </button>
+        </div>
+
+        {/* Beautiful Box Breathing Visual Panel */}
+        {breathingActive && (
+          <div className="bg-[#0A0A0A] border border-[#222] rounded p-4 flex flex-col items-center justify-center space-y-3 animate-fade-in">
+            <div className="text-center">
+              <span className="text-[9px] uppercase font-mono tracking-wider text-slate-500 block font-bold">
+                Box Breathing Phase
+              </span>
+              <span className="text-sm font-black uppercase text-emerald-400 font-mono tracking-widest block mt-0.5">
+                {breathingPhase} ({breathingSeconds}s)
+              </span>
+            </div>
+
+            {/* Visual pulse circle */}
+            <div className="relative w-20 h-20 flex items-center justify-center">
+              <div className={`absolute rounded-full border border-double border-emerald-500/40 bg-emerald-500/10 transition-all duration-1000 ${
+                breathingPhase === "Inhale" 
+                  ? "w-20 h-20 scale-110 opacity-100" 
+                  : breathingPhase === "Hold"
+                    ? "w-20 h-20 scale-110 opacity-80 animate-pulse"
+                    : breathingPhase === "Exhale"
+                      ? "w-10 h-10 scale-90 opacity-40"
+                      : "w-12 h-12 opacity-60"
+              }`}></div>
+              <span className="text-xs font-mono font-bold text-emerald-300 relative z-10">
+                {breathingSeconds}
+              </span>
+            </div>
+
+            <p className="text-[10px] text-slate-400 text-center max-w-[240px] leading-relaxed">
+              {breathingPhase === "Inhale" && "Draw air into your lungs slowly, expanding your abdomen."}
+              {breathingPhase === "Hold" && "Hold the breath steady. Focus completely on stillness."}
+              {breathingPhase === "Exhale" && "Slowly expel all air from your lungs, releasing all muscle tension."}
+              {breathingPhase === "Rest" && "Hold empty, feeling complete clarity and stress release."}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Interactive AI Companion Encourager */}
